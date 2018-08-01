@@ -1,10 +1,13 @@
 import os
 import sys
+from glob import glob
 import random
 import math
 import numpy as np
+import pickle
 import skimage.io
 import matplotlib
+# matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import coco
@@ -24,7 +27,8 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 # Path to trained weights file
 # Download this file and place in the root of your
 # project (See README file for details)
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.pth")
+# COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.pth")
+COCO_MODEL_PATH = '/vision/u/bingbin/mask_rcnn_coco.pth'
 
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "images")
@@ -67,14 +71,24 @@ class_names = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
                'teddy bear', 'hair drier', 'toothbrush']
 
 # Load a random image from the images folder
-file_names = next(os.walk(IMAGE_DIR))[2]
-image = skimage.io.imread(os.path.join(IMAGE_DIR, random.choice(file_names)))
+# file_names = next(os.walk(IMAGE_DIR))[2]
+# file_name = random.choice(file_names)
+all_results = []
+for file_name in glob(os.path.join(IMAGE_DIR, '*.jpg')):
+  # file_name = 'original/3878153025_8fde829928_z.jpg'
+  print('file_name:', file_name)
+  image = skimage.io.imread(os.path.join(IMAGE_DIR, file_name))
 
-# Run detection
-results = model.detect([image])
+  # Run detection
+  results = model.detect([image])
+  all_results.append(results)
 
-# Visualize results
-r = results[0]
-visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
-                            class_names, r['scores'])
-plt.show()
+  # Visualize results
+  r = results[0]
+  visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
+                              class_names, r['scores'])
+  plt.savefig(file_name.replace('.jpg', '_demo.jpg').replace('original/', ''))
+  break
+
+with open('tmp_results_vog.pkl', 'wb') as handle:
+  pickle.dump(all_results, handle)
