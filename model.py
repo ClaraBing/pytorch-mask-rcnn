@@ -118,6 +118,38 @@ class SamePad2d(nn.Module):
     def __repr__(self):
         return self.__class__.__name__
 
+max_pool2 = nn.MaxPool2d(2, 2)
+def downsample_maxpool(feats, size_in, size_out):
+  if feats.dim() == 2:
+    feats = feats.unsqueeze(0)
+  rep = int(np.log2(size_in / size_out))
+  for _ in range(rep):
+    feats = max_pool2(feats)
+  return feats
+
+
+def roi_pool(c5_out, masks):
+  """
+  Feature vector per object max pooled from masked (conv5) feature maps
+  Input:
+    c5_out (torch.Tensor): size = (batch_size, 2048, 32, 32)
+    masks (np.ndarray): shape = (h, w, n)
+
+  Output:
+    obj_feats (torch.Tensor): size = (batch_size, 2048) 
+  """
+  # TODO: currently only support batch_size = 1 ... by BB
+  h, w, n = masks.shape
+
+  pooled_feats = []
+  for mid in range(n):
+    mask = masks[:, :, mid]
+    mask, _, _, _ = utils.resize_image(mask, min_dim=1024, max_dim=1024, padding=True)
+    downsampled_mask = downsample_maxpool(torch.Tensor(mask), 1024, 32)
+    masked_feats = c5_out * downsampled_mask.unsqueeze(1)
+    pooled = masked_feats.max(-1)[0].max(-1)[0]
+    pooled_feats += pooled,
+  return torch.stack(pooled_feats)
 
 ############################################################
 #  FPN Graph
@@ -175,6 +207,8 @@ class FPN(nn.Module):
         x = self.C4(x)
         c4_out = x
         x = self.C5(x)
+        c5_out = x # BB: c5_out used for act/obj head
+        print('c5_out:', c5_out.size())
         p5_out = self.P5_conv1(x)
         p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
         p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
@@ -189,7 +223,7 @@ class FPN(nn.Module):
         # subsampling from P5 with stride of 2.
         p6_out = self.P6(p5_out)
 
-        return [p2_out, p3_out, p4_out, p5_out, p6_out]
+        return [p2_out, p3_out, p4_out, p5_out, p6_out, c5_out] # BB: c5_out used for act/obj head
 
 
 ############################################################
@@ -779,6 +813,7 @@ def refine_detections(rois, probs, deltas, window, config):
 
     # Filter out background boxes
     keep_bool = class_ids>0
+    
 
     # Filter out low confidence boxes
     if config.DETECTION_MIN_CONFIDENCE:
@@ -816,11 +851,15 @@ def refine_detections(rois, probs, deltas, window, config):
     top_ids = class_scores[keep.data].sort(descending=True)[1][:roi_count]
     keep = keep[top_ids.data]
 
+    # Keep only probabilities for the kept boxes
+    probs = probs[keep.data]
+
     # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
     # Coordinates are in image domain.
     result = torch.cat((refined_rois[keep.data],
                         class_ids[keep.data].unsqueeze(1).float(),
-                        class_scores[keep.data].unsqueeze(1)), dim=1)
+                        class_scores[keep.data].unsqueeze(1),
+                        probs), dim=1)
 
     return result
 
@@ -1595,7 +1634,7 @@ class MaskRCNN(nn.Module):
         molded_images = Variable(molded_images, volatile=True)
 
         # Run object detection
-        detections, mrcnn_mask = self.predict([molded_images, image_metas], mode='inference')
+        detections, mrcnn_mask, c5_out = self.predict([molded_images, image_metas], mode='inference')
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
@@ -1604,14 +1643,19 @@ class MaskRCNN(nn.Module):
         # Process detections
         results = []
         for i, image in enumerate(images):
-            final_rois, final_class_ids, final_scores, final_masks =\
+            final_rois, final_class_ids, final_scores, final_masks, final_probs =\
                 self.unmold_detections(detections[i], mrcnn_mask[i],
                                        image.shape, windows[i])
+            roi_feats = roi_pool(c5_out, final_masks)
+
             results.append({
                 "rois": final_rois,
-                "class_ids": final_class_ids,
-                "scores": final_scores,
+                "class_ids": final_class_ids, # cls id for max classes
+                "scores": final_scores, # score for max classes
                 "masks": final_masks,
+                "probs": final_probs, # scores for all classes
+                "c5_out": c5_out,
+                "roi_feats": roi_feats, # feats pooled from c5_out using mask
             })
         return results
 
@@ -1633,7 +1677,11 @@ class MaskRCNN(nn.Module):
             self.apply(set_bn_eval)
 
         # Feature extraction
-        [p2_out, p3_out, p4_out, p5_out, p6_out] = self.fpn(molded_images)
+        # BB: add c5_out at the end: used for act/obj head
+        print('molded_images: type:', type(molded_images))
+        print('molded_images: size:', molded_images.size())
+        [p2_out, p3_out, p4_out, p5_out, p6_out, c5_out] = self.fpn(molded_images)
+        c5_out = c5_out.data.cpu()
 
         # Note that P6 is used in RPN, but not in the classifier heads.
         rpn_feature_maps = [p2_out, p3_out, p4_out, p5_out, p6_out]
@@ -1669,7 +1717,7 @@ class MaskRCNN(nn.Module):
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox = self.classifier(mrcnn_feature_maps, rpn_rois)
 
             # Detections
-            # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
+            # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score), ] in image coordinates
             detections = detection_layer(self.config, rpn_rois, mrcnn_class, mrcnn_bbox, image_metas)
 
             # Convert boxes to normalized coordinates
@@ -1691,7 +1739,7 @@ class MaskRCNN(nn.Module):
             detections = detections.unsqueeze(0)
             mrcnn_mask = mrcnn_mask.unsqueeze(0)
 
-            return [detections, mrcnn_mask]
+            return [detections, mrcnn_mask, c5_out]
 
         elif mode == 'training':
 
@@ -2026,6 +2074,7 @@ class MaskRCNN(nn.Module):
         boxes = detections[:N, :4]
         class_ids = detections[:N, 4].astype(np.int32)
         scores = detections[:N, 5]
+        probs = detections[:N, 6:]
         masks = mrcnn_mask[np.arange(N), :, :, class_ids]
 
         # Compute scale and shift to translate coordinates to image domain.
@@ -2047,6 +2096,7 @@ class MaskRCNN(nn.Module):
             boxes = np.delete(boxes, exclude_ix, axis=0)
             class_ids = np.delete(class_ids, exclude_ix, axis=0)
             scores = np.delete(scores, exclude_ix, axis=0)
+            probs = np.detect(probs, exclude_ix, axis=0)
             masks = np.delete(masks, exclude_ix, axis=0)
             N = class_ids.shape[0]
 
@@ -2059,7 +2109,7 @@ class MaskRCNN(nn.Module):
         full_masks = np.stack(full_masks, axis=-1)\
             if full_masks else np.empty((0,) + masks.shape[1:3])
 
-        return boxes, class_ids, scores, full_masks
+        return boxes, class_ids, scores, full_masks, probs
 
 
 ############################################################
