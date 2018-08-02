@@ -21,10 +21,10 @@ import torch.optim as optim
 import torch.utils.data
 from torch.autograd import Variable
 
-import utils
-import visualize
-from nms.nms_wrapper import nms
-from roialign.roi_align.crop_and_resize import CropAndResizeFunction
+from maskRCNN import utils
+from maskRCNN import visualize
+from maskRCNN.nms.nms_wrapper import nms
+from maskRCNN.roialign.roi_align.crop_and_resize import CropAndResizeFunction
 
 
 ############################################################
@@ -208,7 +208,6 @@ class FPN(nn.Module):
         c4_out = x
         x = self.C5(x)
         c5_out = x # BB: c5_out used for act/obj head
-        print('c5_out:', c5_out.size())
         p5_out = self.P5_conv1(x)
         p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
         p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
@@ -818,7 +817,12 @@ def refine_detections(rois, probs, deltas, window, config):
     # Filter out low confidence boxes
     if config.DETECTION_MIN_CONFIDENCE:
         keep_bool = keep_bool & (class_scores >= config.DETECTION_MIN_CONFIDENCE)
-    keep = torch.nonzero(keep_bool)[:,0]
+    keep_bool = torch.nonzero(keep_bool)
+    if len(keep_bool) == 0:
+      # nothing is kept
+      return []
+
+    keep = keep_bool[:,0]
 
     # Apply per-class NMS
     pre_nms_class_ids = class_ids[keep.data]
@@ -1635,6 +1639,10 @@ class MaskRCNN(nn.Module):
 
         # Run object detection
         detections, mrcnn_mask, c5_out = self.predict([molded_images, image_metas], mode='inference')
+        if len(detections) == 0:
+          return [{"rois":np.empty(0), "class_ids":np.empty(0),
+                   "scores":np.empty(0), "masks":np.empty(0), "probs":np.empty(0),
+                   "c5_out":torch.Tensor([]), "roi_feats":torch.Tensor([])}]
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
@@ -1647,6 +1655,9 @@ class MaskRCNN(nn.Module):
                 self.unmold_detections(detections[i], mrcnn_mask[i],
                                        image.shape, windows[i])
             roi_feats = roi_pool(c5_out, final_masks)
+
+            # c5_out = c5_out.data.cpu()
+            # roi_feats = roi_feats.data.cpu()
 
             results.append({
                 "rois": final_rois,
@@ -1678,8 +1689,6 @@ class MaskRCNN(nn.Module):
 
         # Feature extraction
         # BB: add c5_out at the end: used for act/obj head
-        print('molded_images: type:', type(molded_images))
-        print('molded_images: size:', molded_images.size())
         [p2_out, p3_out, p4_out, p5_out, p6_out, c5_out] = self.fpn(molded_images)
         c5_out = c5_out.data.cpu()
 
@@ -1719,6 +1728,8 @@ class MaskRCNN(nn.Module):
             # Detections
             # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score), ] in image coordinates
             detections = detection_layer(self.config, rpn_rois, mrcnn_class, mrcnn_bbox, image_metas)
+            if len(detections) == 0:
+              return [[], [], []]
 
             # Convert boxes to normalized coordinates
             # TODO: let DetectionLayer return normalized coordinates to avoid
