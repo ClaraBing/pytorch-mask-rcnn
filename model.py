@@ -1657,9 +1657,9 @@ class MaskRCNN(nn.Module):
         # Run object detection
         detections, mrcnn_mask, c5_out, c5_obj = self.predict([molded_images, image_metas], mode='inference')
         if len(detections) == 0:
-          return [{"rois":np.empty(0), "class_ids":np.empty(0),
-                   "scores":np.empty(0), "masks":np.empty(0), "probs":np.empty(0),
-                   "c5_act":torch.Tensor([]), "c5_objs":torch.Tensor([])}]
+          return [{"rois":np.zeros([1,4]), "class_ids":np.zeros([1]),
+                   "scores":np.zeros([1]), "masks":np.zeros([224,224,1]), "probs":np.zeros([1,81]),
+                   "c5_act":torch.zeros([1,2048]), "c5_objs":torch.zeros([1,2048])}]
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
