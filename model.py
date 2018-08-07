@@ -1425,9 +1425,6 @@ class Dataset(torch.utils.data.Dataset):
         # where we train on a subset of classes and the image doesn't
         # have any of the classes we care about.
         if not np.any(gt_class_ids > 0):
-            print('NONE:', gt_class_ids)
-            print('image_index:', image_index)
-            print('image_id:', image_id)
             return None
 
         # RPN Targets

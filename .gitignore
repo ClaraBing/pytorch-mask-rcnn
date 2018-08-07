@@ -7,3 +7,5 @@ logs/
 pycocotools
 *_ext*
 images/
+*tmp*
+maskRCNN
