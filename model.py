@@ -615,11 +615,14 @@ def detection_target_layer(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     # Handle COCO crowds
     # A crowd box in COCO is a bounding box around several instances. Exclude
     # them from training. A crowd box is given a negative class ID.
-    if torch.nonzero(gt_class_ids < 0).size():
+    if len(torch.nonzero(gt_class_ids < 0)):
+        print('gt_class_ids:', gt_class_ids)
+        print('nonzero:', torch.nonzero(gt_class_ids < 0).size())
         crowd_ix = torch.nonzero(gt_class_ids < 0)[:, 0]
-        non_crowd_ix = torch.nonzero(gt_class_ids > 0)[:, 0]
         crowd_boxes = gt_boxes[crowd_ix.data, :]
         crowd_masks = gt_masks[crowd_ix.data, :, :]
+
+        non_crowd_ix = torch.nonzero(gt_class_ids > 0)[:, 0]
         gt_class_ids = gt_class_ids[non_crowd_ix.data]
         gt_boxes = gt_boxes[non_crowd_ix.data, :]
         gt_masks = gt_masks[non_crowd_ix.data, :]
@@ -644,7 +647,7 @@ def detection_target_layer(proposals, gt_class_ids, gt_boxes, gt_masks, config):
 
     # Subsample ROIs. Aim for 33% positive
     # Positive ROIs
-    if torch.nonzero(positive_roi_bool).size():
+    if len(torch.nonzero(positive_roi_bool)):
         positive_indices = torch.nonzero(positive_roi_bool)[:, 0]
 
         positive_count = int(config.TRAIN_ROIS_PER_IMAGE *
@@ -703,7 +706,7 @@ def detection_target_layer(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     negative_roi_bool = roi_iou_max < 0.5
     negative_roi_bool = negative_roi_bool & no_crowd_bool
     # Negative ROIs. Add enough to maintain positive:negative ratio.
-    if torch.nonzero(negative_roi_bool).size() and positive_count>0:
+    if len(torch.nonzero(negative_roi_bool)) and positive_count>0:
         negative_indices = torch.nonzero(negative_roi_bool)[:, 0]
         r = 1.0 / config.ROI_POSITIVE_RATIO
         negative_count = int(r * positive_count - positive_count)
@@ -1113,7 +1116,7 @@ def compute_mrcnn_class_loss(target_class_ids, pred_class_logits):
     """
 
     # Loss
-    if target_class_ids.size():
+    if len(target_class_ids):
         loss = F.cross_entropy(pred_class_logits,target_class_ids.long())
     else:
         loss = Variable(torch.FloatTensor([0]), requires_grad=False)
@@ -1131,7 +1134,7 @@ def compute_mrcnn_bbox_loss(target_bbox, target_class_ids, pred_bbox):
     pred_bbox: [batch, num_rois, num_classes, (dy, dx, log(dh), log(dw))]
     """
 
-    if target_class_ids.size():
+    if len(target_class_ids):
         # Only positive ROIs contribute to the loss. And only
         # the right class_id of each ROI. Get their indicies.
         positive_roi_ix = torch.nonzero(target_class_ids > 0)[:, 0]
@@ -1161,7 +1164,7 @@ def compute_mrcnn_mask_loss(target_masks, target_class_ids, pred_masks):
     pred_masks: [batch, proposals, height, width, num_classes] float32 tensor
                 with values from 0 to 1.
     """
-    if target_class_ids.size():
+    if len(target_class_ids):
         # Only positive ROIs contribute to the loss. And only
         # the class specific mask of each ROI.
         positive_ix = torch.nonzero(target_class_ids > 0)[:, 0]
@@ -1422,6 +1425,9 @@ class Dataset(torch.utils.data.Dataset):
         # where we train on a subset of classes and the image doesn't
         # have any of the classes we care about.
         if not np.any(gt_class_ids > 0):
+            print('NONE:', gt_class_ids)
+            print('image_index:', image_index)
+            print('image_id:', image_id)
             return None
 
         # RPN Targets
@@ -1792,7 +1798,7 @@ class MaskRCNN(nn.Module):
             rois, target_class_ids, target_deltas, target_mask = \
                 detection_target_layer(rpn_rois, gt_class_ids, gt_boxes, gt_masks, self.config)
 
-            if not rois.size():
+            if not len(rois):
                 mrcnn_class_logits = Variable(torch.FloatTensor())
                 mrcnn_class = Variable(torch.IntTensor())
                 mrcnn_bbox = Variable(torch.FloatTensor())
@@ -1833,6 +1839,7 @@ class MaskRCNN(nn.Module):
         # Pre-defined layer regular expressions
         layer_regex = {
             # all layers but the backbone
+            "classifiers": r"(classifier.*)",
             "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
             # From a specific Resnet stage and up
             "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
@@ -1846,9 +1853,9 @@ class MaskRCNN(nn.Module):
 
         # Data generators
         train_set = Dataset(train_dataset, self.config, augment=True)
-        train_generator = torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
+        train_generator = torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=1)
         val_set = Dataset(val_dataset, self.config, augment=True)
-        val_generator = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=True, num_workers=4)
+        val_generator = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=True, num_workers=1)
 
         # Train
         log("\nStarting at epoch {}. LR={}\n".format(self.epoch+1, learning_rate))
@@ -1939,7 +1946,7 @@ class MaskRCNN(nn.Module):
 
             # Backpropagation
             loss.backward()
-            torch.nn.utils.clip_grad_norm(self.parameters(), 5.0)
+            torch.nn.utils.clip_grad_norm_(self.parameters(), 5.0)
             if (batch_count % self.config.BATCH_SIZE) == 0:
                 optimizer.step()
                 optimizer.zero_grad()
@@ -1948,17 +1955,17 @@ class MaskRCNN(nn.Module):
             # Progress
             printProgressBar(step + 1, steps, prefix="\t{}/{}".format(step + 1, steps),
                              suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} - mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - mrcnn_mask_loss: {:.5f}".format(
-                                 loss.data.cpu()[0], rpn_class_loss.data.cpu()[0], rpn_bbox_loss.data.cpu()[0],
-                                 mrcnn_class_loss.data.cpu()[0], mrcnn_bbox_loss.data.cpu()[0],
-                                 mrcnn_mask_loss.data.cpu()[0]), length=10)
+                                 loss.data.cpu().item(), rpn_class_loss.data.cpu().item(), rpn_bbox_loss.data.cpu().item(),
+                                 mrcnn_class_loss.data.cpu().item(), mrcnn_bbox_loss.data.cpu().item(),
+                                 mrcnn_mask_loss.data.cpu().item()), length=10)
 
             # Statistics
-            loss_sum += loss.data.cpu()[0]/steps
-            loss_rpn_class_sum += rpn_class_loss.data.cpu()[0]/steps
-            loss_rpn_bbox_sum += rpn_bbox_loss.data.cpu()[0]/steps
-            loss_mrcnn_class_sum += mrcnn_class_loss.data.cpu()[0]/steps
-            loss_mrcnn_bbox_sum += mrcnn_bbox_loss.data.cpu()[0]/steps
-            loss_mrcnn_mask_sum += mrcnn_mask_loss.data.cpu()[0]/steps
+            loss_sum += loss.data.cpu().item()/steps
+            loss_rpn_class_sum += rpn_class_loss.data.cpu().item()/steps
+            loss_rpn_bbox_sum += rpn_bbox_loss.data.cpu().item()/steps
+            loss_mrcnn_class_sum += mrcnn_class_loss.data.cpu().item()/steps
+            loss_mrcnn_bbox_sum += mrcnn_bbox_loss.data.cpu().item()/steps
+            loss_mrcnn_mask_sum += mrcnn_mask_loss.data.cpu().item()/steps
 
             # Break after 'steps' steps
             if step==steps-1:
@@ -2010,7 +2017,7 @@ class MaskRCNN(nn.Module):
             rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
                 self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
 
-            if not target_class_ids.size():
+            if not len(target_class_ids):
                 continue
 
             # Compute losses
