@@ -1,5 +1,5 @@
 .idea/
-logs/
+logs
 *.pth
 *.so
 *.pyc

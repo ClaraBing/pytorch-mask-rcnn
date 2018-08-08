@@ -1624,6 +1624,7 @@ class MaskRCNN(nn.Module):
         some layers from loading.
         exlude: list of layer names to excluce
         """
+        print("maskRCNN: model.py: Loading weights from", filepath)
         if os.path.exists(filepath):
             state_dict = torch.load(filepath)
             self.load_state_dict(state_dict, strict=False)
@@ -1664,7 +1665,7 @@ class MaskRCNN(nn.Module):
         detections, mrcnn_mask, c5_out, c5_obj = self.predict([molded_images, image_metas], mode='inference')
         if len(detections) == 0:
           return [{"rois":np.zeros([1,4]), "class_ids":np.zeros([1]),
-                   "scores":np.zeros([1]), "masks":np.zeros([224,224,1]), "probs":np.zeros([1,81]),
+                   "scores":np.zeros([1]), "masks":np.zeros([224,224,1]), "probs":np.zeros([1,config.NUM_CLASSES]),
                    "c5_act":torch.zeros([1,2048]), "c5_objs":torch.zeros([1,2048])}]
 
         # Convert to numpy
