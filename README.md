@@ -1,9 +1,13 @@
 ### BB
+Steps to use this repo. Please note that these are only tested on macondo machines.
 * Entry point (training): `epic.py`
   * need to download COCO API (e.g. google it)
 * nvcc: please copy the following lines in your `~/.bashrc`:  
   `export PATH=/usr/local/cuda-9.1/bin/:/sailhome/{your_csid}/anaconda3/bin:$PATH`  
   `export LD_LIBRARY_PATH=/usr/local/cuda-9.1/lib64/:$LD_LIBRARY_PATH`  
+* path to coco pretrained weights:  
+  `/vision/u/bingbin/mask_rcnn_coco.pth`  
+  `/vision/u/bingbin/resnet50_imagenet.pth`  
 
 # pytorch-mask-rcnn
 

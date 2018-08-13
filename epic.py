@@ -360,7 +360,7 @@ if __name__ == '__main__':
                         default=500,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=500)')
-    parser.add_argument('--epic_from_coco', required=True)
+    parser.add_argument('--epic_from_coco', type=int, required=True, help='whether to init weights from coco pretrained model')
     args = parser.parse_args()
     print("Command: ", args.command)
     print("Model: ", args.model)
