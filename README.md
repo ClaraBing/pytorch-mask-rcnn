@@ -1,6 +1,9 @@
 ### BB
 * Entry point (training): `epic.py`
   * need to download COCO API (e.g. google it)
+* nvcc: please copy the following lines in your `~/.bashrc`:
+  `export PATH=/usr/local/cuda-9.1/bin/:/sailhome/{your_csid}/anaconda3/bin:$PATH`
+  `export LD_LIBRARY_PATH=/usr/local/cuda-9.1/lib64/:$LD_LIBRARY_PATH`
 
 # pytorch-mask-rcnn
 
