@@ -87,7 +87,25 @@ class EPICConfig(Config):
     # GPU_COUNT = 8
 
     # Number of classes (including background)
-    NUM_CLASSES = 1 + 352  # COCO has 80 classes
+    NUM_CLASSES = 1 + 352  # EPIC has 352 classes
+
+class COCOConfig(Config):
+    """Configuration for training on EPIC KITHCHENS
+    Derives from the base Config class and overrides values specific
+    to the EPIC dataset.
+    """
+    # Give the configuration a recognizable name
+    NAME = "coco"
+
+    # We use one GPU with 8GB memory, which can fit one image.
+    # Adjust down if you use a smaller GPU.
+    IMAGES_PER_GPU = 16
+
+    # Uncomment to train on 8 GPUs (default is 1)
+    # GPU_COUNT = 8
+
+    # Number of classes (including background)
+    NUM_CLASSES = 1 + 80  # COCO has 80 classes
 
 
 ############################################################
@@ -349,9 +367,11 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', default=DATA_DIR,
                         metavar="/path/to/coco/",
                         help='Directory of the EPIC dataset')
-    parser.add_argument('--model', required=False,
+    parser.add_argument('--model_type', required=True,
                         metavar="/path/to/weights.pth",
-                        help="Path to weights .pth file or 'coco'")
+                        help="Dataset (e.g. 'charades' / 'epic') to train on, which will use diff configurations.")
+    parser.add_argument('--pretrained_path', type=str, default='', required=False,
+                        help='Path to pretrained weights .pth file **on EPIC**. Empty for training from scratch.')
     parser.add_argument('--logs', required=False,
                         default=DEFAULT_LOGS_DIR,
                         metavar="/path/to/logs/",
@@ -360,18 +380,30 @@ if __name__ == '__main__':
                         default=500,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=500)')
-    parser.add_argument('--epic_from_coco', type=int, required=True, help='whether to init weights from coco pretrained model')
+    parser.add_argument('--init_with_coco', type=int, required=True, help='whether to init weights from coco pretrained model')
     args = parser.parse_args()
+
+    assert(not (args.init_with_coco and args.pretrained_path)),\
+       print('args.pretrained_path should be a pretrained model on EPIC. Conflicting with init_with_coco.')
+
     print("Command: ", args.command)
-    print("Model: ", args.model)
+    print("Model type: ", args.model_type)
+    print("Pretrained weights:", args.pretrained_path)
     print("Dataset: ", args.dataset)
     print("Logs: ", args.logs)
-    print('Use COCO to init early layers for EPIC:', args.epic_from_coco)
+    print('Use COCO to init early layers for EPIC:', args.init_with_coco)
+
 
 
     # Configurations
     if args.command == "train":
+      if args.model_type.lower() == 'epic':
         config = EPICConfig()
+      elif args.model_type.lower() == 'charades':
+        raise NotImplementedError("CharadesConfig not implemented.")
+        config = CharadesConfig()
+      else:
+        raise ValueError('model_type shoudl be "epic" or "charades"')
     else:
         class InferenceConfig(EPICConfig):
             # Set batch size to 1 since we'll be running inference on
@@ -384,38 +416,41 @@ if __name__ == '__main__':
 
     # Create model
     if args.command == "train":
-        model = modellib.MaskRCNN(config=config,
-                                  model_dir=args.logs)
+        if args.model_type.lower() == 'coco' or args.init_with_coco:
+          coco_config = COCOConfig()
+          model = modellib.MaskRCNN(config=coco_config,
+                                    model_dir=args.logs)
+        else:
+          model = modellib.MaskRCNN(config=config,
+                                    model_dir=args.logs)
     else:
         model = modellib.MaskRCNN(config=config,
                                   model_dir=args.logs)
 
     # Select weights file to load
-    if args.model:
-        if args.model.lower() == "coco" or args.epic_from_coco:
-            model_path = COCO_MODEL_PATH
-        elif args.model.lower() == "epic":
-            model_path = EPIC_MODEL_PATH
-            model.mask.conv5 = nn.Conv2d(256, config.NUM_CLASSES, kernel_size=1, stride=1)
-            model.classifier.linear_class = nn.Linear(1024, config.NUM_CLASSES)
-            model.classifier.linear_bbox = nn.Linear(1024, config.NUM_CLASSES * 4)
-        elif args.model.lower() == "last":
-            # Find last trained weights
-            model_path = model.find_last()[1]
-        elif args.model.lower() == "imagenet":
-            # Start from ImageNet trained weights
-            model_path = config.IMAGENET_MODEL_PATH
-        else:
-            model_path = args.model
+    if args.model_type.lower() == "coco" or args.init_with_coco:
+        model_path = COCO_MODEL_PATH
+    elif args.model_type.lower() == "epic":
+        model_path = EPIC_MODEL_PATH
+        model.mask.conv5 = nn.Conv2d(256, config.NUM_CLASSES, kernel_size=1, stride=1)
+        model.classifier.linear_class = nn.Linear(1024, config.NUM_CLASSES)
+        model.classifier.linear_bbox = nn.Linear(1024, config.NUM_CLASSES * 4)
+    elif args.model_type.lower() == "last":
+        # TODO: untested (BB)
+        # Find last trained weights
+        model_path = model.find_last()[1]
+    elif args.model.lower() == "imagenet":
+        # Start from ImageNet trained weights
+        model_path = config.IMAGENET_MODEL_PATH
     else:
-        model_path = ""
+        model_path = args.pretrained_path
 
     # Load weights
     print("Loading weights ", model_path)
     model.load_weights(model_path)
 
 
-    if args.model.lower() == 'epic' and args.epic_from_coco:
+    if args.init_with_coco:
       # retrain the classifier layer
       model.mask.conv5 = nn.Conv2d(256, config.NUM_CLASSES, kernel_size=1, stride=1)
       model.classifier.linear_class = nn.Linear(1024, config.NUM_CLASSES)
@@ -457,6 +492,7 @@ if __name__ == '__main__':
                     epochs=40,
                     layers='heads')
 
+        exit()
         # BB: only finetune the heads (see above)
         # # Training - Stage 2
         # # Finetune layers from ResNet stage 4 and up

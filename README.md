@@ -9,6 +9,9 @@ Steps to use this repo. Please note that these are only tested on macondo machin
   `/vision/u/bingbin/mask_rcnn_coco.pth`  
   `/vision/u/bingbin/resnet50_imagenet.pth`  
 
+To train on EPIC, please use the following command:  
+`python epic.py train --model=epic --logs={your_log} [--init_with_coco=1 | --pretrained_path={your_non-coco_model_path}]`  
+
 # pytorch-mask-rcnn
 
 
