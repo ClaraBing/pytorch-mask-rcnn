@@ -1,3 +1,7 @@
+### BB
+* Entry point (training): `epic.py`
+  * need to download COCO API (e.g. google it)
+
 # pytorch-mask-rcnn
 
 
