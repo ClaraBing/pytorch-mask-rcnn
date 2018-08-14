@@ -7,8 +7,6 @@ Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
 
-# TODO: make c5_act / c5_obj numpy -- done; untested
-# TODO: squeeze c5_out to size d * 2048 -- done; untested
 
 import datetime
 import math
@@ -151,7 +149,7 @@ def roi_pool(c5_obj, masks):
   pooled_feats = []
   for mid in range(n):
     mask = masks[:, :, mid]
-    mask, _, _, _ = utils.resize_image(mask, min_dim=1024, max_dim=1024, padding=True)
+    mask, _, _, _ = utils.resize_image(mask, min_dim=800, max_dim=1024, padding=True)
     downsampled_mask = downsample_maxpool(torch.Tensor(mask).to(device), 1024, 32)
     masked_feats = c5_obj * downsampled_mask.unsqueeze(1)
     pooled = masked_feats.max(-1)[0].max(-1)[0]
@@ -616,8 +614,6 @@ def detection_target_layer(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     # A crowd box in COCO is a bounding box around several instances. Exclude
     # them from training. A crowd box is given a negative class ID.
     if len(torch.nonzero(gt_class_ids < 0)):
-        print('gt_class_ids:', gt_class_ids)
-        print('nonzero:', torch.nonzero(gt_class_ids < 0).size())
         crowd_ix = torch.nonzero(gt_class_ids < 0)[:, 0]
         crowd_boxes = gt_boxes[crowd_ix.data, :]
         crowd_masks = gt_masks[crowd_ix.data, :, :]
@@ -1425,9 +1421,6 @@ class Dataset(torch.utils.data.Dataset):
         # where we train on a subset of classes and the image doesn't
         # have any of the classes we care about.
         if not np.any(gt_class_ids > 0):
-            print('NONE:', gt_class_ids)
-            print('image_index:', image_index)
-            print('image_id:', image_id)
             return None
 
         # RPN Targets
@@ -1636,7 +1629,7 @@ class MaskRCNN(nn.Module):
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
 
-    def detect(self, images):
+    def detect(self, images, gt_bboxes=[], gt_classes=[], gt_rois=[]):
         """Runs the detection pipeline.
 
         images: List of images, potentially of different sizes.
@@ -1647,6 +1640,12 @@ class MaskRCNN(nn.Module):
         scores: [N] float probability scores for the class IDs
         masks: [H, W, N] instance binary masks
         """
+
+        if type(gt_bboxes)==list and type(gt_classes)==list:
+          assert(gt_bboxes==gt_classes==[])
+        else:
+          assert(gt_bboxes.shape[-1]==len(gt_classes)), \
+            print('gt_bboxes:{} / gt_classes:{}'.format(gt_bboxes.shape, len(gt_classes)))
 
         # Mold inputs to format expected by the neural network
         molded_images, image_metas, windows = self.mold_inputs(images)
@@ -1663,9 +1662,12 @@ class MaskRCNN(nn.Module):
 
         # Run object detection
         detections, mrcnn_mask, c5_out, c5_obj = self.predict([molded_images, image_metas], mode='inference')
+
+
         if len(detections) == 0:
+          h, w, _ = images[0].shape
           return [{"rois":np.zeros([1,4]), "class_ids":np.zeros([1]),
-                   "scores":np.zeros([1]), "masks":np.zeros([224,224,1]), "probs":np.zeros([1,config.NUM_CLASSES]),
+                   "scores":np.zeros([1]), "masks":np.zeros([h, w, 1]), "probs":np.zeros([1,self.config.NUM_CLASSES]),
                    "c5_act":torch.zeros([1,2048]), "c5_objs":torch.zeros([1,2048])}]
 
         # Convert to numpy
@@ -1678,7 +1680,20 @@ class MaskRCNN(nn.Module):
             final_rois, final_class_ids, final_scores, final_masks, final_probs =\
                 self.unmold_detections(detections[i], mrcnn_mask[i],
                                        image.shape, windows[i])
+            if len(gt_bboxes) != 0:
+              final_masks = gt_bboxes
             masks_tensor = torch.Tensor(final_masks)
+
+            if gt_classes != []:
+              final_class_ids = np.array(gt_classes).astype(np.int32)
+              assert(final_class_ids.shape[0] == masks_tensor.shape[-1]),\
+                print('model.py: cls_id:{} / masks_tensor:{}'.format(final_class_ids.shape, masks_tensor.shape))
+              final_scores = np.ones_like(final_class_ids)
+              final_probs = np.zeros((final_scores.shape[0], self.config.NUM_CLASSES))
+              final_probs[range(len(gt_classes)), final_class_ids] = 1
+              final_class_ids += 1 # gt_classes are zero-based
+              final_class_ids = final_class_ids.astype(np.int32)
+
             if self.config.GPU_COUNT:
               masks_tensor = masks_tensor.to(device)
               c5_obj = c5_obj.to(device)
@@ -1686,9 +1701,13 @@ class MaskRCNN(nn.Module):
 
             c5_act = c5_out.max(-1)[0].max(-1)[0].data.cpu().numpy()
             c5_objs = roi_feats.data.cpu().numpy()
+            assert(c5_objs.shape[0]==len(final_class_ids)),\
+              print('c5_objs:{} / len(final_class_ids):{}'.format(c5_objs.shape, len(final_class_ids)))
+            assert(final_masks.shape[-1] == len(final_class_ids)), \
+              print('final_masks:{} / len(final_class_ids):{}'.format(final_masks.shape, len(final_class_ids)))
 
             results.append({
-                "rois": final_rois,
+                "rois": gt_rois if gt_rois!=[] else final_rois,
                 "class_ids": final_class_ids, # cls id for max classes
                 "scores": final_scores, # score for max classes
                 "masks": final_masks,

@@ -77,7 +77,7 @@ def apply_mask(image, mask, color, alpha=0.5):
 
 def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
-                      figsize=(16, 16), ax=None):
+                      figsize=(16, 16), ax=None, save_name=''):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -91,7 +91,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     if not N:
         print("\n*** No instances to display *** \n")
     else:
-        assert boxes.shape[0] == masks.shape[-1] == class_ids.shape[0]
+        assert(boxes.shape[0] == masks.shape[-1] == class_ids.shape[0]), \
+          print('boxes:{} / masks:{} / class_ids:{}'.format(
+            boxes, masks.shape, class_ids.shape))
 
     if not ax:
         _, ax = plt.subplots(1, figsize=figsize)
@@ -107,6 +109,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     ax.set_title(title)
 
     masked_image = image.astype(np.uint32).copy()
+    np.save(save_name.replace('.jpg', '_tmp'), masked_image)
     for i in range(N):
         color = colors[i]
 
@@ -121,7 +124,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         ax.add_patch(p)
 
         # Label
-        class_id = class_ids[i]
+        class_id = int(class_ids[i])
         score = scores[i] if scores is not None else None
         label = class_names[class_id]
         x = random.randint(x1, (x1 + x2) // 2)
