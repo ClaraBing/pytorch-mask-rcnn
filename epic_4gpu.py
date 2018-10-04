@@ -84,7 +84,7 @@ class EPICConfig(Config):
     IMAGES_PER_GPU = 16
 
     # Uncomment to train on 8 GPUs (default is 1)
-    # GPU_COUNT = 8
+    GPU_COUNT = 4
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 352  # EPIC has 352 nouns
@@ -458,9 +458,15 @@ if __name__ == '__main__':
       model.classifier.linear_class = nn.Linear(1024, config.NUM_CLASSES)
       model.classifier.linear_bbox = nn.Linear(1024, config.NUM_CLASSES * 4)
 
-
     if config.GPU_COUNT:
         model = model.cuda()
+
+    # if torch.cuda.device_count() > 1:
+    #     print("Let's use", torch.cuda.device_count(), "GPUs!")
+    #     # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+    #     model = nn.DataParallel(model, device_ids=[0,1,2,3])
+
+
 
     #train_json = os.path.join(ANNOT_DIR, 'coco_train_object_labels_exists.json')
     # train on full
@@ -493,6 +499,7 @@ if __name__ == '__main__':
 
         # Training - Stage 1
         print("Training network heads")
+
         model.train_model(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=40,

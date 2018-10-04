@@ -213,7 +213,13 @@ class Dataset(object):
     def get_source_class_id(self, class_id, source):
         """Map an internal class ID to the corresponding class ID in the source dataset."""
         info = self.class_info[class_id]
-        assert info['source'] == source
+        try:
+            assert info['source'] == source
+        except AssertionError:
+            print(info['source'])
+            print(source)
+            print(class_id)
+
         return info['id']
 
     def append_data(self, class_info, image_info):

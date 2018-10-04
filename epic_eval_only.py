@@ -48,10 +48,13 @@ import shutil
 
 from maskRCNN.config import Config
 import maskRCNN.utils as utils
-import maskRCNN.model as modellib
+import maskRCNN.model_815 as modellib
 
 import torch
 import torch.nn as nn
+
+import pdb
+
 
 # Root directory of the project
 ROOT_DIR = os.getcwd()
@@ -62,7 +65,7 @@ ANNOT_DIR = '/vision/u/bingbin/EPIC_KITCHENS_2018/annotations'
 # Path to trained weights file
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.pth")
 COCO_MODEL_PATH = '/vision/u/bingbin/mask_rcnn_coco.pth'
-
+EPIC_MODEL_PATH = '/vision/u/cy3/exp/rcnn/batch/coco20180813T2223/mask_rcnn_coco_0023.pth'
 # Directory to save logs and model checkpoints, if not provided
 # through the command line argument --logs
 DEFAULT_LOGS_DIR = os.path.join(ROOT_DIR, "logs")
@@ -82,6 +85,8 @@ class EPICConfig(Config):
     # We use one GPU with 8GB memory, which can fit one image.
     # Adjust down if you use a smaller GPU.
     IMAGES_PER_GPU = 16
+    IMAGES_PER_GPU = 32
+    IMAGES_PER_GPU = 64
 
     # Uncomment to train on 8 GPUs (default is 1)
     # GPU_COUNT = 8
@@ -163,7 +168,7 @@ class EPICDataset(utils.Dataset):
             self.add_image(
                 "coco", image_id=i,
                 path=os.path.join(image_dir, coco.imgs[i]['file_name']), # prepare EPIC w/ file name
-                width= 1920, # coco.imgs[i]["width"], # TODO: check if EPIC has the same size
+                width= 1920, # coco.imgs[i]["width"], # TODO: check if EPIC has the same size Ans: No
                 height= 1080, # coco.imgs[i]["height"],
                 annotations=coco.loadAnns(coco.getAnnIds(
                     imgIds=[i], catIds=class_ids, iscrowd=None)))
@@ -272,7 +277,8 @@ class EPICDataset(utils.Dataset):
 #  COCO Evaluation
 ############################################################
 
-def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
+#def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
+def build_coco_results(dataset, image_ids, rois, class_ids, scores):
     """Arrange resutls to match COCO specs in http://cocodataset.org/#format
     """
     # If no results, return an empty list
@@ -286,11 +292,11 @@ def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
             class_id = class_ids[i]
             score = scores[i]
             bbox = np.around(rois[i], 1)
-            mask = masks[:, :, i]
+            #mask = masks[:, :, i]
 
             result = {
                 "image_id": image_id,
-                "category_id": dataset.get_source_class_id(class_id, "coco"),
+                "category_id": dataset.get_source_class_id(int(class_id), "coco"),
                 "bbox": [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]],
                 "score": score,
                 # Commented out by BB: EPIC doesn't have seg info
@@ -309,6 +315,9 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     # Pick COCO images from the dataset
     image_ids = image_ids or dataset.image_ids
 
+
+
+
     # Limit to a subset
     if limit:
         image_ids = image_ids[:limit]
@@ -319,6 +328,8 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     t_prediction = 0
     t_start = time.time()
 
+    #pdb.set_trace()
+
     results = []
     for i, image_id in enumerate(image_ids):
         # Load image
@@ -328,6 +339,8 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
         t = time.time()
         r = model.detect([image])[0]
         t_prediction += (time.time() - t)
+
+        #pdb.set_trace()
 
         # Convert results to COCO format
         image_results = build_coco_results(dataset, coco_image_ids[i:i + 1],
@@ -367,6 +380,9 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', default=DATA_DIR,
                         metavar="/path/to/coco/",
                         help='Directory of the EPIC dataset')
+    parser.add_argument('--eval_model',
+                        metavar="/path/to/coco/",
+                        help='path to model for evaluation')
     parser.add_argument('--model_type', required=True,
                         metavar="/path/to/weights.pth",
                         help="Dataset (e.g. 'charades' / 'epic') to train on, which will use diff configurations.")
@@ -377,7 +393,7 @@ if __name__ == '__main__':
                         metavar="/path/to/logs/",
                         help='Logs and checkpoints directory (default=logs/)')
     parser.add_argument('--limit', required=False,
-                        default=500,
+                        default=5,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=500)')
     parser.add_argument('--init_with_coco', type=int, required=True, help='whether to init weights from coco pretrained model')
@@ -432,7 +448,7 @@ if __name__ == '__main__':
     if args.model_type.lower() == "coco" or args.init_with_coco:
         model_path = COCO_MODEL_PATH
     elif args.model_type.lower() == "epic":
-        model_path = EPIC_MODEL_PATH
+        model_path = args.eval_model # EPIC_MODEL_PATH
         model.mask.conv5 = nn.Conv2d(256, config.NUM_CLASSES, kernel_size=1, stride=1)
         model.classifier.linear_class = nn.Linear(1024, config.NUM_CLASSES)
         model.classifier.linear_bbox = nn.Linear(1024, config.NUM_CLASSES * 4)
@@ -465,7 +481,7 @@ if __name__ == '__main__':
     #train_json = os.path.join(ANNOT_DIR, 'coco_train_object_labels_exists.json')
     # train on full
     CC_ANNOT_DIR = '/vision/u/cy3/data/EPIC/annotations/'
-    train_json = os.path.join(CC_ANNOT_DIR, 'coco_train_object_labels_full.json')
+    train_json = os.path.join(CC_ANNOT_DIR, 'coco_train_object_labels_819c.json')
 
     val_json = train_json
 
@@ -523,7 +539,7 @@ if __name__ == '__main__':
         dataset_val.prepare()
         print("Running COCO evaluation on {} images.".format(args.limit))
         evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
-        evaluate_coco(model, dataset_val, coco, "segm", limit=int(args.limit))
+        #evaluate_coco(model, dataset_val, coco, "segm", limit=int(args.limit))
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'evaluate'".format(args.command))
